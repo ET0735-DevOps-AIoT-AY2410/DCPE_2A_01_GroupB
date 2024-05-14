@@ -1,4 +1,6 @@
+import RPi.GPIO as GPIO
 import time
+from time import sleep
 from threading import Thread
 import queue
 
@@ -20,9 +22,6 @@ from hal import hal_accelerometer as accel
 #Empty list to store sequence of keypad presses
 shared_keypad_queue = queue.Queue()
 
-
-
-
 #Call back function invoked when any key on keypad is pressed
 def key_pressed(key):
     shared_keypad_queue.put(key)
@@ -43,6 +42,17 @@ def main():
     usonic.init()
     dc_motor.init()
     accelerometer = accel.init()
+
+    # EC Sensor = Pin 18
+    # pH Sensor = Pin 27
+
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(18, GPIO.input) 
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(27, GPIO.input) 
+
 
     keypad.init(key_pressed)
     keypad_thread = Thread(target=keypad.get_key)
@@ -69,6 +79,97 @@ def main():
     print("press # to test slide switch")  
     print("print * to test IR sensor")
 
+    def maintain_airtemp():
+        airtemp = temp_humid_sensor.read_temp_humidity()[0]
+        
+        if airtemp < 0:
+            return False
+
+        while 25 <= airtemp <= 27:
+            dc_motor.set_motor_speed(15)
+            return True
+
+        while 28 <= airtemp <= 30:
+            dc_motor.set_motor_speed(30)
+            return True
+        
+        while 31 <= airtemp <= 35:
+            dc_motor.set_motor_speed(50)
+            return True
+
+    # Thread to monitor and maintain air temperature in background
+    airtemp_thread = Thread(target = maintain_airtemp)
+    airtemp_thread.start()
+
+    def monitor_humidity():
+        humidity = temp_humid_sensor.read_temp_humidity()[1]
+        if humidity < 0 or humidity > 100:
+            return False
+        
+        while 0 <= humidity <= 100:
+            print("The relative humidity is " + str(humidity) + "%")
+            sleep(1.5)
+            return True
+
+
+    # Thread to monitor relative humidity in background
+    humidity_thread = Thread(target = monitor_humidity)
+    humidity_thread.start()
+
+    def maintain_ec():
+        ec_level = GPIO.input(18)
+        if ec_level < 0: # Checks for negative EC Level that could be due to a malfunction
+            return False
+        else:
+            ec_lowerlimit = 1
+            servo1 = GPIO.PWM(37, 50)
+            while 0 <= ec_level <= ec_lowerlimit:
+                i=0
+                for i in range(180):
+                    servo.set_servo_position(i)
+                    i+=1
+                    sleep(0.01)
+            return True
+        
+    # Thread to monitor and maintain electrical conductivity in background
+    ec_thread = Thread(target = maintain_ec)
+    ec_thread.start()  
+
+    def monitor_ph():
+        ph = GPIO.input(27)
+        if ph < 0 or ph > 14:
+            return False
+        
+        while 0 <= ph < 7:
+            print("The solution is more acidic, with a pH of " + str(ph))
+            sleep(1)
+            return True        
+
+        while ph == 7:
+            print("The solution is neutral, with a pH of " + str(ph))
+            sleep(1)
+            return True
+        
+        while 7 < ph <= 14:
+            print("The solution is more acidic, with a pH of " + str(ph))
+            sleep(1)
+            return True   
+
+    # Thread to monitor pH level in background
+    ph_thread = Thread(target = monitor_ph)
+    ph_thread.start()
+
+    def maintain_light():
+        if ir_sensor.get_ir_sensor_state==0:
+            return False
+        
+        while ir_sensor.get_ir_sensor_state():
+            led.set_output(1)
+            return True
+
+    # Thread to monitor and maintain light intensity in background
+    light_thread = Thread(target = maintain_light)
+    light_thread.start()
 
     while(True):
         lcd.lcd_clear()
@@ -172,13 +273,12 @@ def main():
             print(x_axis)
             print(y_axis)
             print(z_axis)  
-
-            time.sleep(2)  
-       
+        time.sleep(2)
 
 
         time.sleep(1)
-
+        
+GPIO.cleanup
 
 
 
